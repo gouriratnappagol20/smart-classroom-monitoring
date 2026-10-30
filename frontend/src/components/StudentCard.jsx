@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { 
   ShieldCheck, 
   AlertOctagon, 
@@ -59,11 +59,11 @@ export default function StudentCard({
           <div>
             <div className="flex items-center gap-1.5">
               <span className="font-mono font-bold text-sm text-slate-900">{student.id}</span>
-              <span className="text-slate-300">·</span>
+              <span className="text-slate-300">Â·</span>
               <span className="text-xs font-semibold text-slate-800">{student.studentName}</span>
             </div>
             <div className="text-[11px] text-slate-500 font-mono">
-              {student.seat} · {student.ipAddress}
+              {student.seat} Â· {student.ipAddress}
             </div>
           </div>
         </div>
@@ -78,7 +78,7 @@ export default function StudentCard({
           ) : (
             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Safe</span>
+              <span>No recent alert</span>
             </span>
           )}
         </div>
@@ -123,12 +123,12 @@ export default function StudentCard({
         <div>
           <div className="flex justify-between text-[10px] text-slate-500">
             <span>CPU</span>
-            <span className="font-mono text-slate-700 font-medium">{student.cpuUsage}%</span>
+            <span className="font-mono text-slate-700 font-medium">{student.cpuUsage == null ? 'N/A' : student.cpuUsage + '%'}</span>
           </div>
           <div className="w-full h-1 bg-slate-100 rounded-full mt-1 overflow-hidden">
             <div 
               className={`h-full rounded-full ${student.cpuUsage > 50 ? 'bg-amber-500' : 'bg-blue-600'}`}
-              style={{ width: `${student.cpuUsage}%` }}
+              style={{ width: `${student.cpuUsage == null ? 'N/A' : student.cpuUsage + '%'}` }}
             ></div>
           </div>
         </div>
@@ -137,12 +137,12 @@ export default function StudentCard({
         <div>
           <div className="flex justify-between text-[10px] text-slate-500">
             <span>RAM</span>
-            <span className="font-mono text-slate-700 font-medium">{student.ramUsage}%</span>
+            <span className="font-mono text-slate-700 font-medium">{student.ramUsage == null ? 'N/A' : student.ramUsage + '%'}</span>
           </div>
           <div className="w-full h-1 bg-slate-100 rounded-full mt-1 overflow-hidden">
             <div 
               className={`h-full rounded-full ${student.ramUsage > 70 ? 'bg-red-500' : 'bg-slate-600'}`}
-              style={{ width: `${student.ramUsage}%` }}
+              style={{ width: `${student.ramUsage == null ? 'N/A' : student.ramUsage + '%'}` }}
             ></div>
           </div>
         </div>
@@ -150,7 +150,7 @@ export default function StudentCard({
         {/* Latency */}
         <div className="flex items-center space-x-1 justify-center border-l border-slate-100 pl-2">
           <Wifi className="w-3 h-3 text-slate-400" />
-          <span className="font-mono text-[10px] text-slate-700">{student.latency}</span>
+          <span className="font-mono text-[10px] text-slate-700">{student.latency || 'N/A'}</span>
         </div>
 
         {/* Compliance */}
@@ -159,7 +159,7 @@ export default function StudentCard({
           <span className={`font-mono text-[10px] font-bold ${
             student.complianceScore > 85 ? 'text-emerald-700' : 'text-red-600'
           }`}>
-            {student.complianceScore}%
+            {student.complianceScore == null ? 'N/A' : student.complianceScore + '%'}
           </span>
         </div>
       </div>
@@ -167,7 +167,7 @@ export default function StudentCard({
       {/* 5. Warning Alert strip if warnings exist */}
       {student.warningsSent && student.warningsSent.length > 0 && (
         <div className="px-4 py-1.5 bg-amber-50/80 border-t border-amber-200 text-[11px] text-amber-800 flex items-center justify-between">
-          <span className="truncate">⚠️ Sent: "{student.warningsSent[student.warningsSent.length - 1]}"</span>
+          <span className="truncate">âš ï¸ Sent: "{student.warningsSent[student.warningsSent.length - 1]}"</span>
           <span className="text-[10px] bg-amber-100 px-1.5 py-0.2 rounded font-semibold shrink-0">
             {student.warningsSent.length} warning(s)
           </span>
@@ -234,3 +234,4 @@ export default function StudentCard({
     </div>
   );
 }
+

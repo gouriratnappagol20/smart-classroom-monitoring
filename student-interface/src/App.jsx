@@ -1,14 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import LoginPage from './pages/LoginPage';
 import InstructionsPage from './pages/InstructionsPage';
 import ExaminationPage from './pages/ExaminationPage';
 import SubmissionPage from './pages/SubmissionPage';
+import { getExamApi } from './services/api';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState('login'); // 'login' | 'instructions' | 'exam' | 'submission'
   const [currentStudent, setCurrentStudent] = useState(null);
   const [submissionResult, setSubmissionResult] = useState(null);
   const [eventLogs, setEventLogs] = useState([]);
+  const [examData, setExamData] = useState(null);
+
+  // Load examination info dynamically from backend
+  useEffect(() => {
+    getExamApi()
+      .then(data => {
+        setExamData(data);
+      })
+      .catch(err => {
+        console.warn("[SENTINEL] Backend exam pre-fetch:", err.message);
+      });
+  }, []);
 
   // Handle successful login
   const handleLoginSuccess = (studentData) => {
@@ -50,6 +63,7 @@ export default function App() {
       {currentPage === 'instructions' && (
         <InstructionsPage 
           student={currentStudent}
+          examData={examData}
           onStartExam={handleStartExam}
           onBackToLogin={() => setCurrentPage('login')}
         />
@@ -58,6 +72,7 @@ export default function App() {
       {currentPage === 'exam' && (
         <ExaminationPage 
           student={currentStudent}
+          examData={examData}
           onFinishSubmission={handleFinishSubmission}
           onLogMonitoringEvent={handleLogMonitoringEvent}
         />
@@ -72,4 +87,3 @@ export default function App() {
     </div>
   );
 }
-

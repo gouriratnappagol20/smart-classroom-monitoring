@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+﻿import React, { useState, useMemo, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import OverviewPage from './components/OverviewPage';
@@ -9,7 +9,7 @@ import LockConfirmModal from './components/LockConfirmModal';
 import SendWarningModal from './components/SendWarningModal';
 import StudentDetailModal from './components/StudentDetailModal';
 import ExamActionModal from './components/ExamActionModal';
-import { initialStudents, initialAlerts, initialActivities, examConfig } from './data/mockData';
+// Dashboard data is loaded from the live backend.
 import { CheckCircle2, AlertTriangle, AlertOctagon, Info, X } from 'lucide-react';
 
 export default function App() {
@@ -18,9 +18,9 @@ export default function App() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Core Data States
-  const [students, setStudents] = useState(initialStudents);
-  const [alerts, setAlerts] = useState(initialAlerts);
-  const [activities, setActivities] = useState(initialActivities);
+  const [students, setStudents] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [activities, setActivities] = useState([]);
   const [isExamActive, setIsExamActive] = useState(true);
 
   // Modals
@@ -39,6 +39,227 @@ export default function App() {
     }, 3800);
   };
 
+  const teacherSocketRef = useRef(null);
+
+  // Load actual SQLite records and current WebSocket connection state.
+  useEffect(() => {
+    const apiBase = (
+      import.meta.env.VITE_API_BASE_URL ||
+      `http://${window.location.hostname}:8000`
+    ).replace(/\/$/, '');
+
+    const wsBase = (
+      import.meta.env.VITE_WS_BASE_URL ||
+      apiBase.replace(/^http/, 'ws')
+    ).replace(/\/$/, '');
+
+    let active = true;
+    let reconnectTimer = null;
+    let pollTimer = null;
+
+    const mapAlert = (item, previousAlerts) => {
+      const old = previousAlerts.find(a => String(a.id) === String(item.alert_id));
+
+      return {
+        id: String(item.alert_id),
+        pcId: item.student_id,
+        studentName: item.student_name || item.student_id,
+        severity: item.event_type === 'APPLICATION_SWITCH' ? 'critical' :
+                  item.event_type === 'BROWSER_SWITCH' ? 'high' : 'medium',
+        reason: item.event_type,
+        unauthorizedApp: item.application_name || 'Not reported',
+        details: item.description || '',
+        timestamp: item.timestamp
+          ? new Date(item.timestamp).toLocaleTimeString()
+          : 'Unknown',
+        timeAgo: 'Recorded by backend',
+        iconType: 'AlertTriangle',
+        acknowledged: old ? old.acknowledged : false
+      };
+    };
+
+    const refreshDashboard = async () => {
+      try {
+        const [studentsResponse, alertsResponse] = await Promise.all([
+          fetch(`${apiBase}/api/students`),
+          fetch(`${apiBase}/api/alerts`)
+        ]);
+
+        if (!studentsResponse.ok || !alertsResponse.ok) {
+          throw new Error('Backend returned an unsuccessful response.');
+        }
+
+        const studentData = await studentsResponse.json();
+        const alertData = await alertsResponse.json();
+
+        const mappedAlerts = (alertData.alerts || []).map(item =>
+          mapAlert(item, alerts)
+        );
+
+        // Only show students whose browser or OS agent is genuinely connected.
+        const connectedStudents = (studentData.students || [])
+          .filter(item => item.online);
+
+        setStudents(previous => connectedStudents.map(item => {
+          const old = previous.find(s => s.id === item.student_id);
+          const latest = item.latest_alert;
+          const alertTime = latest?.timestamp
+            ? new Date(latest.timestamp).getTime()
+            : 0;
+
+          const recentViolation =
+            latest &&
+            !['INTEGRATION_TEST', 'STUDENT_DISCONNECTED'].includes(latest.event_type) &&
+            Date.now() - alertTime < 10 * 60 * 1000;
+
+          return {
+            id: item.student_id,
+            studentName: item.name,
+            studentRoll: item.student_id,
+            seat: item.web_connected && item.os_connected
+              ? 'Browser + Desktop Agent'
+              : item.web_connected ? 'Browser Connected' : 'Desktop Agent Connected',
+            ipAddress: 'LAN — address not reported',
+            status: recentViolation ? 'violation' : 'safe',
+            activeWindow: latest?.application_name ||
+              (item.os_connected ? 'Agent connected — awaiting application event' :
+               'Browser connected — desktop agent offline'),
+            processName: 'Not reported',
+            screenType: 'live',
+            screenImage: old?.screenImage || null,
+            cpuUsage: null,
+            ramUsage: null,
+            latency: null,
+            webcamStatus: 'offline',
+            lastActiveTime: 'Connected now',
+            complianceScore: null,
+            violationCount: item.violation_count || 0,
+            isLocked: item.status === 'LOCKED',
+            warningsSent: old?.warningsSent || [],
+            details: {
+              webConnected: item.web_connected,
+              osConnected: item.os_connected,
+              latestAlert: latest || null
+            }
+          };
+        }));
+
+        setAlerts(mappedAlerts);
+
+        setActivities(mappedAlerts.slice(0, 20).map(alert => ({
+          id: `alert-${alert.id}`,
+          timestamp: alert.timestamp,
+          pcId: alert.pcId,
+          studentName: alert.studentName,
+          type: alert.severity === 'critical' ? 'danger' : 'warning',
+          title: alert.reason,
+          description: alert.details
+        })));
+
+      } catch (error) {
+        console.error('[SENTINEL] Dashboard refresh failed:', error);
+      }
+    };
+
+    const connectTeacherSocket = () => {
+      if (!active) return;
+
+      const socket = new WebSocket(`${wsBase}/ws/teacher`);
+      teacherSocketRef.current = socket;
+
+      socket.onopen = () => {
+        console.info('[SENTINEL] Teacher live connection established.');
+        refreshDashboard();
+      };
+
+      socket.onmessage = event => {
+        try {
+          const message = JSON.parse(event.data);
+
+          if (
+            message.type === 'INITIAL_SYNC' ||
+            message.type === 'STUDENT_STATUS' ||
+            message.type === 'ALERT'
+          ) {
+            refreshDashboard();
+          }
+
+          if (message.type === 'SCREEN_STREAM' && message.image_base64) {
+            const image = `data:image/jpeg;base64,${message.image_base64}`;
+
+            setStudents(previous => previous.map(student =>
+              student.id === message.student_id
+                ? { ...student, screenImage: image }
+                : student
+            ));
+          }
+
+          if (message.type === 'COMMAND_ACK') {
+            const delivered = message.delivery &&
+              (message.delivery.web_delivered || message.delivery.os_delivered);
+
+            showToast(
+              delivered
+                ? `${message.action} delivered to a connected student client.`
+                : `${message.action} was not delivered: no matching client connection.`,
+              delivered ? 'success' : 'warning'
+            );
+
+            refreshDashboard();
+          }
+
+          if (message.type === 'ERROR') {
+            showToast(message.message || 'Backend command error.', 'danger');
+          }
+        } catch (error) {
+          console.error('[SENTINEL] Invalid WebSocket message:', error);
+        }
+      };
+
+      socket.onclose = () => {
+        teacherSocketRef.current = null;
+        if (active) {
+          reconnectTimer = window.setTimeout(connectTeacherSocket, 2500);
+        }
+      };
+
+      socket.onerror = () => socket.close();
+    };
+
+    connectTeacherSocket();
+    refreshDashboard();
+    pollTimer = window.setInterval(refreshDashboard, 5000);
+
+    return () => {
+      active = false;
+      window.clearInterval(pollTimer);
+      window.clearTimeout(reconnectTimer);
+
+      if (teacherSocketRef.current) {
+        teacherSocketRef.current.close();
+        teacherSocketRef.current = null;
+      }
+    };
+  }, []);
+
+  const sendTeacherCommand = (studentId, action, message = '') => {
+    const socket = teacherSocketRef.current;
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      showToast('Teacher live connection is unavailable. Command not sent.', 'danger');
+      return false;
+    }
+
+    socket.send(JSON.stringify({
+      student_id: studentId,
+      action,
+      message,
+      target: 'all'
+    }));
+
+    return true;
+  };
+
   // Quick Stats
   const stats = useMemo(() => {
     const safeCount = students.filter(s => s.status === 'safe').length;
@@ -50,70 +271,25 @@ export default function App() {
       safe: safeCount,
       violations: violationCount,
       unresolvedAlerts: unacknowledgedCount,
-      isAllLocked: students.every(s => s.isLocked)
+      isAllLocked: students.length > 0 && students.every(s => s.isLocked)
     };
   }, [students, alerts]);
 
-  // Handle Lock / Unlock Station
+  // Send a real lock/unlock command through the teacher WebSocket.
   const handleConfirmLockToggle = (studentId) => {
-    setStudents(prev => prev.map(student => {
-      if (student.id === studentId) {
-        const nextState = !student.isLocked;
-        showToast(
-          nextState 
-            ? `Workstation ${student.id} has been locked. Keyboard & mouse disabled.` 
-            : `Workstation ${student.id} unlocked. Input restored.`,
-          nextState ? 'danger' : 'success'
-        );
+    const student = students.find(s => s.id === studentId);
+    if (!student) return;
 
-        // Add to activity log
-        setActivities(acts => [
-          {
-            id: `act-${Date.now()}`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            pcId: student.id,
-            studentName: student.studentName,
-            type: nextState ? 'danger' : 'success',
-            title: nextState ? 'Station Locked' : 'Station Unlocked',
-            description: nextState ? 'Workstation locked by Chief Proctor override.' : 'Workstation unlocked and restored.',
-          },
-          ...acts
-        ]);
+    const action = student.isLocked ? 'UNLOCK' : 'LOCK';
 
-        return { ...student, isLocked: nextState };
-      }
-      return student;
-    }));
+    if (sendTeacherCommand(studentId, action)) {
+      showToast(`${action} command sent. Waiting for backend delivery confirmation.`, 'warning');
+    }
   };
 
-  // Handle Send Warning
+  // Send warning to the connected student interface and desktop agent.
   const handleConfirmWarning = (studentId, message) => {
-    setStudents(prev => prev.map(student => {
-      if (student.id === studentId) {
-        return {
-          ...student,
-          warningsSent: [...(student.warningsSent || []), message],
-        };
-      }
-      return student;
-    }));
-
-    showToast(`Warning sent to ${studentId}: "${message.substring(0, 32)}..."`, 'warning');
-
-    // Add to activity log
-    const targetStudent = students.find(s => s.id === studentId);
-    setActivities(acts => [
-      {
-        id: `act-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        pcId: studentId,
-        studentName: targetStudent ? targetStudent.studentName : 'Candidate',
-        type: 'warning',
-        title: 'Proctor Warning Transmitted',
-        description: `Message: "${message}"`,
-      },
-      ...acts
-    ]);
+    sendTeacherCommand(studentId, 'WARNING', message);
   };
 
   // Handle Acknowledge Alert
@@ -128,95 +304,51 @@ export default function App() {
     showToast('All active incident alerts acknowledged.', 'success');
   };
 
-  // Handle Start / End Exam toggle
+  // Exam start/end controls are not yet backed by a backend endpoint.
   const handleConfirmExamToggle = () => {
-    setIsExamActive(prev => {
-      const next = !prev;
-      showToast(
-        next 
-          ? 'Examination resumed. Live telemetry and compliance tracking online.' 
-          : 'Examination concluded / paused.',
-        next ? 'success' : 'warning'
-      );
-      return next;
+    showToast('Exam start/end control is not connected to the backend yet.', 'warning');
+  };
+
+  // Send lock/unlock commands to all currently connected students.
+  const handleToggleLockAll = () => {
+    if (students.length === 0) {
+      showToast('No connected students are available.', 'warning');
+      return;
+    }
+
+    const nextLocked = !stats.isAllLocked;
+    const action = nextLocked ? 'LOCK' : 'UNLOCK';
+
+    students.forEach(student => {
+      sendTeacherCommand(student.id, action);
     });
   };
 
-  // Master Lock All Workstations
-  const handleToggleLockAll = () => {
-    const nextLocked = !stats.isAllLocked;
-    setStudents(prev => prev.map(s => ({ ...s, isLocked: nextLocked })));
-    showToast(
-      nextLocked 
-        ? 'Emergency protocol engaged: ALL workstations locked.' 
-        : 'ALL workstations unlocked.',
-      nextLocked ? 'danger' : 'success'
-    );
-  };
-
-  // Capture Screenshot Feedback
+  // Download the latest genuinely received screen frame.
   const handleCaptureScreenshot = (student) => {
-    showToast(`Forensic screenshot saved for ${student.id} (${new Date().toLocaleTimeString()})`, 'info');
-  };
-
-  // Interactive Demo Simulator Toggle for Judges
-  const handleSimulateViolationToggle = () => {
-    setStudents(prev => prev.map(student => {
-      if (student.id === 'PC-02') {
-        const isNowSafe = student.status === 'violation';
-        if (isNowSafe) {
-          return {
-            ...student,
-            status: 'safe',
-            activeWindow: 'lab_exam.c - Visual Studio Code',
-            processName: 'code.exe',
-            screenType: 'vscode',
-            webcamStatus: 'verified',
-            complianceScore: 97,
-            violationReason: undefined,
-          };
-        } else {
-          return {
-            ...student,
-            status: 'violation',
-            activeWindow: 'ChatGPT - Google Chrome',
-            processName: 'chrome.exe',
-            screenType: 'chatgpt',
-            webcamStatus: 'suspicious',
-            complianceScore: 32,
-            violationReason: 'Unauthorized AI Tool (OpenAI ChatGPT)',
-          };
-        }
-      }
-      return student;
-    }));
-
-    const pc02 = students.find(s => s.id === 'PC-02');
-    if (pc02 && pc02.status === 'safe') {
-      showToast('Simulated PC-02 violation: Unauthorized AI Tool opened.', 'danger');
-    } else {
-      showToast('PC-02 restored to compliant code editor.', 'success');
+    if (!student.screenImage) {
+      showToast('No live screen frame has been received from this student.', 'warning');
+      return;
     }
+
+    const link = document.createElement('a');
+    link.href = student.screenImage;
+    link.download = `SENTINEL_${student.id}_${Date.now()}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    showToast('Received student screen frame downloaded.', 'success');
   };
 
-  // Inject Simulated Alert
-  const handleAddSimulatedAlert = () => {
-    const newAlert = {
-      id: `alert-${Date.now()}`,
-      pcId: "PC-01",
-      studentName: "Sarah Jenkins",
-      severity: "high",
-      reason: "Window Focus Lost (Alt+Tab)",
-      unauthorizedApp: "Desktop Workspace Switch",
-      details: "Candidate attempted switching workspace during active exam window.",
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      timeAgo: "Just now",
-      iconType: "Clipboard",
-      acknowledged: false,
-    };
+  // Simulation disabled in live operation.
+  const handleSimulateViolationToggle = () => {
+    showToast('Demo simulation is disabled. Use the real student monitoring agent.', 'warning');
+  };
 
-    setAlerts(prev => [newAlert, ...prev]);
-    showToast('New real-time incident injected into radar!', 'danger');
+  // Simulated alerts are disabled in live operation.
+  const handleAddSimulatedAlert = () => {
+    showToast('Simulated alerts are disabled. Real alerts arrive from connected clients.', 'warning');
   };
 
   // Working CSV Download shortcut
@@ -332,11 +464,11 @@ export default function App() {
         <footer className="border-t border-slate-200 bg-white px-6 py-3 text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center space-x-2">
             <span className="font-semibold text-slate-700">SENTINEL AI</span>
-            <span>·</span>
+            <span>Â·</span>
             <span>Academic Integrity & Examination Monitoring System</span>
           </div>
           <div className="font-mono text-[11px] text-slate-400">
-            National Hackathon Edition · v3.0.0
+            National Hackathon Edition Â· v3.0.0
           </div>
         </footer>
 
@@ -412,3 +544,4 @@ export default function App() {
     </div>
   );
 }
+

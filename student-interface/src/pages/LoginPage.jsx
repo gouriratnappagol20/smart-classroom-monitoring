@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { 
   Shield, 
   Lock, 
@@ -13,11 +13,12 @@ import {
   Laptop
 } from 'lucide-react';
 import { preconfiguredStudents, examMetadata } from '../data/examQuestions';
+import { loginStudentApi } from '../services/api';
 
 export default function LoginPage({ onLoginSuccess }) {
   const [selectedPreset, setSelectedPreset] = useState("PC-02");
-  const [studentId, setStudentId] = useState("STU-1092");
-  const [studentName, setStudentName] = useState("David Miller");
+  const [studentId, setStudentId] = useState("STU002");
+  const [studentName, setStudentName] = useState("Bob Smith");
   const [examCode, setExamCode] = useState(examMetadata.examId);
   const [seatNumber, setSeatNumber] = useState("Station A-02");
   
@@ -36,7 +37,7 @@ export default function LoginPage({ onLoginSuccess }) {
     }
   };
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     const newErrors = {};
 
@@ -52,16 +53,24 @@ export default function LoginPage({ onLoginSuccess }) {
     setErrors({});
     setIsLoading(true);
 
-    setTimeout(() => {
+    try {
+      const response = await loginStudentApi(studentId.trim(), examCode.trim());
+      if (response && response.success) {
+        onLoginSuccess({
+          id: response.student_id,
+          studentId: response.student_id,
+          name: response.name || studentName.trim(),
+          seat: seatNumber,
+          examCode: examCode.trim()
+        });
+      } else {
+        setErrors({ general: response?.message || "Authentication failed. Session locked by proctor." });
+      }
+    } catch (err) {
+      setErrors({ general: err.message || "Failed to authenticate session with backend." });
+    } finally {
       setIsLoading(false);
-      onLoginSuccess({
-        id: selectedPreset,
-        studentId: studentId.trim(),
-        name: studentName.trim(),
-        seat: seatNumber,
-        examCode: examCode.trim()
-      });
-    }, 600);
+    }
   };
 
   return (
@@ -132,6 +141,14 @@ export default function LoginPage({ onLoginSuccess }) {
             </span>
           </div>
 
+          {/* General Backend Error Display */}
+          {errors.general && (
+            <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <span className="leading-snug">{errors.general}</span>
+            </div>
+          )}
+
           {/* Login Form */}
           <form onSubmit={handleLogin} className="space-y-4">
             
@@ -146,7 +163,7 @@ export default function LoginPage({ onLoginSuccess }) {
                   type="text"
                   value={studentId}
                   onChange={(e) => setStudentId(e.target.value)}
-                  placeholder="e.g. STU-1092"
+                  placeholder="e.g. STU001"
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-xs font-mono text-slate-900 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-colors"
                 />
               </div>
@@ -183,7 +200,7 @@ export default function LoginPage({ onLoginSuccess }) {
                   type="text"
                   value={examCode}
                   onChange={(e) => setExamCode(e.target.value)}
-                  placeholder="e.g. CS-301-MIDTERM"
+                  placeholder="e.g. EXAM_101"
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-xs font-mono text-slate-900 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-colors"
                 />
               </div>
@@ -237,7 +254,7 @@ export default function LoginPage({ onLoginSuccess }) {
 
       {/* Footer */}
       <div className="max-w-6xl mx-auto w-full text-center text-xs text-slate-400 pt-6">
-        SENTINEL Secure Examination Environment · Department of Computer Science & Engineering
+        SENTINEL Secure Examination Environment Â· Department of Computer Science & Engineering
       </div>
 
     </div>

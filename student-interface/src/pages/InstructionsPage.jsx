@@ -6,16 +6,22 @@ import {
   AlertTriangle, 
   CheckCircle2, 
   ArrowRight, 
-  ArrowLeft,
-  Laptop,
-  Globe,
-  Award,
-  HelpCircle
+  ArrowLeft, 
+  Laptop, 
+  Globe, 
+  Award, 
+  HelpCircle 
 } from 'lucide-react';
 import { examMetadata } from '../data/examQuestions';
 
-export default function InstructionsPage({ student, onStartExam, onBackToLogin }) {
+export default function InstructionsPage({ student, examData, onStartExam, onBackToLogin }) {
   const [agreed, setAgreed] = useState(false);
+
+  const resolvedMetadata = examData?.metadata || examMetadata;
+  const totalQuestions = examData?.questions?.length || resolvedMetadata.totalQuestions || 4;
+  const duration = resolvedMetadata.durationMinutes || resolvedMetadata.duration || 60;
+  const instructions = resolvedMetadata.instructions || examMetadata.instructions;
+  const examId = student?.examCode || resolvedMetadata.examId || "EXAM_101";
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-between p-4 sm:p-6 lg:p-8">
@@ -56,10 +62,10 @@ export default function InstructionsPage({ student, onStartExam, onBackToLogin }
                 Authorized Session
               </span>
               <h1 className="text-lg sm:text-xl font-bold text-slate-900 mt-1">
-                {examMetadata.examTitle}
+                {resolvedMetadata.examTitle || resolvedMetadata.title}
               </h1>
               <p className="text-xs text-slate-500">
-                {examMetadata.department} · Exam ID: <span className="font-mono text-slate-700 font-semibold">{examMetadata.examId}</span>
+                {resolvedMetadata.department || examMetadata.department} · Exam ID: <span className="font-mono text-slate-700 font-semibold">{examId}</span>
               </p>
             </div>
 
@@ -67,7 +73,7 @@ export default function InstructionsPage({ student, onStartExam, onBackToLogin }
             <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs">
               <div className="text-slate-500 text-[10px] uppercase font-semibold">Candidate Verified</div>
               <div className="font-bold text-slate-900 text-sm">{student?.name}</div>
-              <div className="font-mono text-[11px] text-blue-700">{student?.id} · {student?.seat}</div>
+              <div className="font-mono text-[11px] text-blue-700">{student?.studentId || student?.id} · {student?.seat}</div>
             </div>
           </div>
 
@@ -75,22 +81,22 @@ export default function InstructionsPage({ student, onStartExam, onBackToLogin }
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-slate-500 text-[10px] uppercase block">Total Duration</span>
-              <span className="font-bold text-slate-900 text-sm font-mono">{examMetadata.durationMinutes} Minutes</span>
+              <span className="font-bold text-slate-900 text-sm font-mono">{duration} Minutes</span>
             </div>
 
             <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-slate-500 text-[10px] uppercase block">Total Questions</span>
-              <span className="font-bold text-slate-900 text-sm font-mono">{examMetadata.totalQuestions} Items</span>
+              <span className="font-bold text-slate-900 text-sm font-mono">{totalQuestions} Items</span>
             </div>
 
             <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-slate-500 text-[10px] uppercase block">Maximum Marks</span>
-              <span className="font-bold text-slate-900 text-sm font-mono">{examMetadata.totalMarks} Marks</span>
+              <span className="font-bold text-slate-900 text-sm font-mono">{totalQuestions * 10} Marks</span>
             </div>
 
             <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-slate-500 text-[10px] uppercase block">Passing Grade</span>
-              <span className="font-bold text-emerald-700 text-sm font-mono">{examMetadata.passingMarks}% Score</span>
+              <span className="font-bold text-emerald-700 text-sm font-mono">{resolvedMetadata.passingMarks || 50}% Score</span>
             </div>
           </div>
         </div>
@@ -134,7 +140,7 @@ export default function InstructionsPage({ student, onStartExam, onBackToLogin }
           </h3>
 
           <ul className="space-y-2 text-xs text-slate-600">
-            {examMetadata.instructions.map((inst, index) => (
+            {instructions.map((inst, index) => (
               <li key={index} className="flex items-start space-x-2">
                 <span className="font-bold text-blue-700 font-mono shrink-0 mt-0.5">{index + 1}.</span>
                 <span className="leading-relaxed">{inst}</span>
@@ -185,4 +191,3 @@ export default function InstructionsPage({ student, onStartExam, onBackToLogin }
     </div>
   );
 }
-

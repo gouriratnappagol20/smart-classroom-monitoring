@@ -12,7 +12,8 @@ export default function Header({
   secondsLeft, 
   answeredCount, 
   totalQuestions, 
-  isAutoSaving, 
+  isAutoSaving,
+  saveError,
   onRequestSubmit 
 }) {
   const formatTime = (totalSec) => {
@@ -22,7 +23,7 @@ export default function Header({
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
-  const progressPercentage = Math.round((answeredCount / totalQuestions) * 100);
+  const progressPercentage = Math.round((answeredCount / (totalQuestions || 1)) * 100);
 
   // Timer color threshold
   const isUrgent = secondsLeft < 300; // < 5 mins
@@ -61,7 +62,7 @@ export default function Header({
             </div>
             <div>
               <span className="font-semibold text-slate-800">{student?.name || "Candidate"}</span>
-              <span className="text-[11px] text-slate-400 font-mono ml-1.5">({student?.id || "PC-02"})</span>
+              <span className="text-[11px] text-slate-400 font-mono ml-1.5">({student?.studentId || student?.id || "PC-02"})</span>
             </div>
           </div>
 
@@ -73,6 +74,10 @@ export default function Header({
               <span className="text-amber-600 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>
                 Saving...
+              </span>
+            ) : saveError ? (
+              <span className="text-red-600 flex items-center gap-1">
+                Save failed (offline)
               </span>
             ) : (
               <span className="text-emerald-700 flex items-center gap-1">

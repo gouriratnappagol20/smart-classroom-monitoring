@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+﻿import React, { useState, useMemo } from 'react';
 import StudentCard from './StudentCard';
 import { 
   Search, 
@@ -101,16 +101,6 @@ export default function LiveMonitoringPage({
             </button>
           </div>
 
-          {/* Quick Demo Simulator Toggle for Judges */}
-          <button
-            onClick={onSimulateViolationToggle}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg font-medium bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition-colors shadow-xs"
-            title="Toggle PC-02 between Safe code editor and ChatGPT violation (for demo)"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-            <span>Simulate PC-02 Violation</span>
-          </button>
-
           {/* Master Lock All */}
           <button
             onClick={onToggleLockAll}
@@ -154,7 +144,7 @@ export default function LiveMonitoringPage({
       {filteredStudents.length === 0 && (
         <div className="card-base p-10 text-center bg-white">
           <Users className="w-10 h-10 text-slate-400 mx-auto mb-2" />
-          <h3 className="text-sm font-bold text-slate-800">No workstation monitors match your filter</h3>
+          <h3 className="text-sm font-bold text-slate-800">No live student connections</h3>
           <p className="text-xs text-slate-500 mt-1">Try clearing your search query or selecting "All".</p>
           <button
             onClick={() => { setSearchTerm(''); setStatusFilter('all'); }}
@@ -168,4 +158,5 @@ export default function LiveMonitoringPage({
     </div>
   );
 }
+
 

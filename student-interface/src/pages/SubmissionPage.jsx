@@ -6,15 +6,15 @@ import {
   FileText, 
   Award, 
   User, 
-  Home,
-  Download
+  Home, 
+  Download 
 } from 'lucide-react';
 import { examMetadata } from '../data/examQuestions';
 
 export default function SubmissionPage({ submissionResult, onResetToLogin }) {
-  const { student, summary, submittedAt } = submissionResult || {};
+  const { student, summary, submittedAt, referenceId: apiRefId } = submissionResult || {};
 
-  const referenceId = `SENTINEL-SUB-${Date.now().toString().slice(-6)}`;
+  const referenceId = apiRefId || `SENTINEL-SUB-${Date.now().toString().slice(-6)}`;
   const formattedTime = submittedAt 
     ? new Date(submittedAt).toLocaleString() 
     : new Date().toLocaleString();
@@ -78,20 +78,20 @@ export default function SubmissionPage({ submissionResult, onResetToLogin }) {
 
             <div>
               <span className="text-[10px] text-slate-400 block">Student ID</span>
-              <span className="font-bold text-slate-800 text-xs">{student?.id}</span>
+              <span className="font-bold text-slate-800 text-xs">{student?.studentId || student?.id}</span>
             </div>
 
             <div>
               <span className="text-[10px] text-slate-400 block">Total Answered</span>
               <span className="font-bold text-emerald-700 text-xs">
-                {summary?.answeredCount || 10} / {examMetadata.totalQuestions}
+                {summary?.answeredCount ?? 0} / {summary?.totalQuestions || examMetadata.totalQuestions}
               </span>
             </div>
 
             <div>
               <span className="text-[10px] text-slate-400 block">Submission Time</span>
               <span className="font-bold text-slate-800 text-[11px] truncate block">
-                {new Date().toLocaleTimeString()}
+                {submittedAt ? new Date(submittedAt).toLocaleTimeString() : new Date().toLocaleTimeString()}
               </span>
             </div>
           </div>
@@ -129,4 +129,3 @@ export default function SubmissionPage({ submissionResult, onResetToLogin }) {
     </div>
   );
 }
-

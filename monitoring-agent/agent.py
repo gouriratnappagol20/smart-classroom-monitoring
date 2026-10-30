@@ -1,36 +1,34 @@
-"""
-SENTINEL Institution-Managed OS Monitoring Agent (Type 2: Application Switching)
-Monitors foreground active window switches on authorized candidate workstations.
-Uses Windows Win32 APIs via standard library `ctypes` (No third-party packages required).
-"""
-
+﻿import asyncio
+import base64
+import ctypes
+import json
 import sys
 import time
-import json
-import urllib.request
-import urllib.error
-from datetime import datetime
-import ctypes
+from datetime import datetime, timezone
+from io import BytesIO
 from ctypes import wintypes
+from urllib.parse import quote
 
-# Windows API Function Definitions
+import websockets
+from PIL import ImageGrab
+
+if sys.platform != "win32":
+    raise SystemExit("SENTINEL desktop agent currently requires Windows.")
+
 user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
-
-# Buffer length for window titles
 BUFFER_SIZE = 512
+FRAME_INTERVAL_SECONDS = 3
+MAX_SCREEN_WIDTH = 960
 
-# Allowed/Approved Examination Windows (Case-insensitive substrings)
 APPROVED_WINDOW_KEYWORDS = [
     "sentinel",
-    "secure student examination",
-    "cs-301: advanced systems",
+    "secure student",
     "examination portal",
+    "cs401",
     "vite",
-    "localhost:3001"
+    "localhost:3001",
 ]
 
-# Specifically Restricted Target Applications
 RESTRICTED_APP_POLICIES = {
     "notepad": "Notepad / Text Editor",
     "calculator": "System Calculator",
@@ -41,131 +39,196 @@ RESTRICTED_APP_POLICIES = {
     "whatsapp": "Instant Messaging (WhatsApp)",
     "telegram": "Instant Messaging (Telegram)",
     "stackoverflow": "External Programming Reference (Stack Overflow)",
-    "code": "Visual Studio Code / External Editor"
+    "code": "Visual Studio Code / External Editor",
 }
 
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
 def get_active_window_info():
-    """Retrieves the handle, title, and process ID of the active foreground window."""
     hwnd = user32.GetForegroundWindow()
     if not hwnd:
-        return None, "Unknown Window", 0
+        return None, "", 0
 
     title_buffer = ctypes.create_unicode_buffer(BUFFER_SIZE)
     user32.GetWindowTextW(hwnd, title_buffer, BUFFER_SIZE)
-    window_title = title_buffer.value
 
     pid = wintypes.DWORD()
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
 
-    return hwnd, window_title, pid.value
+    return hwnd, title_buffer.value, pid.value
 
-def is_window_approved(window_title):
-    """Checks whether the given window title matches the permitted examination window."""
-    if not window_title or not window_title.strip():
-        return True # Desktop or transient system window
 
-    title_lower = window_title.lower()
-    for keyword in APPROVED_WINDOW_KEYWORDS:
-        if keyword in title_lower:
-            return True
+def is_window_approved(title):
+    lowered = (title or "").lower()
+    return any(word in lowered for word in APPROVED_WINDOW_KEYWORDS)
 
-    return False
 
-def identify_restricted_application(window_title):
-    """Categorizes the unauthorized application based on window title matching."""
-    title_lower = window_title.lower()
-    for keyword, app_label in RESTRICTED_APP_POLICIES.items():
-        if keyword in title_lower:
-            return app_label
+def identify_application(title):
+    lowered = (title or "").lower()
+    for keyword, label in RESTRICTED_APP_POLICIES.items():
+        if keyword in lowered:
+            return label
     return "External Desktop Application"
 
-def send_event_to_backend(backend_url, event_data):
-    """Transmits an application switching event to the SENTINEL Monitoring Gateway."""
-    try:
-        url = f"{backend_url}/api/monitoring/event"
-        data = json.dumps(event_data).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=3) as response:
-            return response.status in (200, 201)
-    except urllib.error.URLError:
-        # Backend might not be running yet
-        return False
-    except Exception as e:
-        print(f"[Agent Warning] Gateway transmission error: {e}")
-        return False
 
-def run_agent(student_id="PC-02", exam_id="CS-301-MIDTERM", backend_url="http://localhost:8000"):
-    print("=" * 70)
-    print(" 🛡️ SENTINEL INSTITUTIONAL MONITORING AGENT (OS APPLICATION DETECTION)")
-    print("=" * 70)
-    print(f" Target Workstation ID : {student_id}")
-    print(f" Active Examination ID : {exam_id}")
-    print(f" Monitoring Gateway    : {backend_url}")
-    print(f" Status                : ACTIVE (Foreground Window Hook Engaged)")
-    print(" Press Ctrl+C at any time to authorizedly terminate agent monitoring.")
-    print("=" * 70)
+def capture_screen_base64():
+    """Capture the desktop visibly shared with the examination proctor."""
+    image = ImageGrab.grab()
 
-    last_active_hwnd = None
-    last_reported_title = None
-    warning_count = 0
+    if image.width > MAX_SCREEN_WIDTH:
+        new_height = int(image.height * MAX_SCREEN_WIDTH / image.width)
+        image = image.resize((MAX_SCREEN_WIDTH, new_height))
 
-    try:
-        while True:
+    buffer = BytesIO()
+    image.convert("RGB").save(
+        buffer,
+        format="JPEG",
+        quality=45,
+        optimize=True
+    )
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+async def receive_teacher_commands(websocket):
+    async for raw_message in websocket:
+        try:
+            data = json.loads(raw_message)
+        except json.JSONDecodeError:
+            continue
+
+        if data.get("type") == "CONNECTION_ESTABLISHED":
+            print("[CONNECTED] Backend registered this desktop agent.")
+
+        elif data.get("type") == "COMMAND":
+            action = str(data.get("action", "")).upper()
+            message = data.get("message", "")
+
+            print(f"\n[PROCTOR COMMAND] {action}: {message}")
+
+            if action == "LOCK":
+                print("[INFO] The connected student browser receives the exam-lock command.")
+                print("[INFO] This agent does not disable Windows keyboard or mouse input.")
+            elif action == "UNLOCK":
+                print("[INFO] The browser exam interface receives the unlock command.")
+            elif action == "WARNING":
+                print("[WARNING] Please follow the proctor's instruction.")
+
+
+async def run_connected_agent(student_id, exam_id, backend_url):
+    ws_base = backend_url.rstrip("/")
+    ws_base = ws_base.replace("https://", "wss://", 1)
+    ws_base = ws_base.replace("http://", "ws://", 1)
+
+    websocket_url = f"{ws_base}/ws/student/os/{quote(student_id)}"
+
+    print("=" * 65)
+    print("SENTINEL — VISIBLE DESKTOP MONITORING AGENT")
+    print("=" * 65)
+    print(f"Student ID : {student_id}")
+    print(f"Exam ID    : {exam_id}")
+    print(f"Gateway    : {websocket_url}")
+    print("Application monitoring: ACTIVE")
+    print("Screen sharing: ACTIVE every 3 seconds")
+    print("Press Ctrl+C to stop monitoring.")
+    print("=" * 65)
+
+    async with websockets.connect(
+        websocket_url,
+        ping_interval=20,
+        max_size=8 * 1024 * 1024
+    ) as websocket:
+
+        receiver = asyncio.create_task(receive_teacher_commands(websocket))
+
+        # Do not report the agent's own launch window as an exam violation.
+        _, last_title, _ = get_active_window_info()
+        last_reported_title = None
+        last_frame_time = 0.0
+        capture_error_reported = False
+
+        while not receiver.done():
             hwnd, title, pid = get_active_window_info()
 
-            if hwnd and hwnd != last_active_hwnd:
-                last_active_hwnd = hwnd
+            if hwnd and title and title != last_title:
+                last_title = title
 
-                # If the student switched away from the approved exam window
                 if not is_window_approved(title) and title != last_reported_title:
                     last_reported_title = title
-                    warning_count += 1
-                    app_category = identify_restricted_application(title)
-                    timestamp = datetime.utcnow().isoformat()
+                    app_name = identify_application(title)
 
-                    event_payload = {
+                    event = {
                         "student_id": student_id,
                         "exam_id": exam_id,
                         "event_type": "APPLICATION_SWITCH",
                         "subtype": "FOREGROUND_CHANGE",
-                        "application_name": app_category,
-                        "description": f"Candidate switched to unauthorized application window: '{title}'",
-                        "timestamp": timestamp,
-                        "warning_count": warning_count,
-                        "severity": "critical"
+                        "application_name": app_name,
+                        "description": (
+                            f"Candidate switched to unauthorized foreground "
+                            f"application: '{title}' (PID: {pid})"
+                        ),
+                        "timestamp": now_iso(),
+                        "severity": "high",
                     }
 
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚨 VIOLATION FLAGGED (#{warning_count}): {app_category}")
-                    print(f"           Active Window Title : '{title}' (PID: {pid})")
+                    await websocket.send(json.dumps(event))
+                    print(f"[ALERT] {app_name}: {title}")
 
-                    success = send_event_to_backend(backend_url, event_payload)
-                    if success:
-                        print("           ✓ Transmitted to Teacher Dashboard & Student Portal")
-                    else:
-                        print("           [!] Gateway offline; logged to agent audit buffer")
-
-                elif is_window_approved(title) and last_reported_title:
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Candidate returned to approved examination window.")
+                elif is_window_approved(title):
+                    if last_reported_title:
+                        print("[INFO] Returned to an approved examination window.")
                     last_reported_title = None
 
-            time.sleep(1.0) # Check interval (1 second)
+            current_time = time.monotonic()
 
-    except KeyboardInterrupt:
-        print("\n[SENTINEL Agent] Authorized termination received. Disengaging hooks.")
-        # Send disconnect event
-        disconnect_payload = {
-            "student_id": student_id,
-            "exam_id": exam_id,
-            "event_type": "STUDENT_DISCONNECTED",
-            "description": "Candidate workstation monitoring agent terminated authorizedly.",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        send_event_to_backend(backend_url, disconnect_payload)
-        print("[SENTINEL Agent] Workstation monitoring stopped cleanly.")
+            if current_time - last_frame_time >= FRAME_INTERVAL_SECONDS:
+                try:
+                    image_data = await asyncio.to_thread(capture_screen_base64)
+
+                    frame = {
+                        "type": "SCREEN_STREAM",
+                        "student_id": student_id,
+                        "image_base64": image_data,
+                        "timestamp": now_iso(),
+                    }
+
+                    await websocket.send(json.dumps(frame))
+                    last_frame_time = current_time
+                    capture_error_reported = False
+
+                except Exception as exc:
+                    if not capture_error_reported:
+                        print(f"[SCREEN CAPTURE ERROR] {exc}")
+                        capture_error_reported = True
+                    last_frame_time = current_time
+
+            await asyncio.sleep(1)
+
+        await receiver
+
+
+async def run_agent(student_id, exam_id, backend_url):
+    while True:
+        try:
+            await run_connected_agent(student_id, exam_id, backend_url)
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception as exc:
+            print(f"[CONNECTION LOST] {exc}")
+            print("[RECONNECTING] Retrying in 3 seconds...")
+            await asyncio.sleep(3)
+
 
 if __name__ == "__main__":
-    student_id = sys.argv[1] if len(sys.argv) > 1 else "PC-02"
-    exam_id = sys.argv[2] if len(sys.argv) > 2 else "CS-301-MIDTERM"
-    backend_url = sys.argv[3] if len(sys.argv) > 3 else "http://localhost:8000"
-    run_agent(student_id, exam_id, backend_url)
+    student_id = sys.argv[1] if len(sys.argv) > 1 else "STU002"
+    exam_id = sys.argv[2] if len(sys.argv) > 2 else "EXAM_101"
+    backend_url = sys.argv[3] if len(sys.argv) > 3 else "http://127.0.0.1:8000"
 
+    try:
+        asyncio.run(run_agent(student_id, exam_id, backend_url))
+    except KeyboardInterrupt:
+        print("\n[SENTINEL] Monitoring stopped by the operator.")
